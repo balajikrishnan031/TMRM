@@ -27,13 +27,13 @@ from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, Any, List, Optional, Tuple, Union
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 __all__ = ["TMRM", "TopologicalManifoldResonantMachine", "StreamingTMRM"]
 
 
 class TopologicalManifoldResonantMachine:
     """
-    Topological Manifold Resonant Machine (TMRM v4.0 - Universal Enterprise)
+    Topological Manifold Resonant Machine (TMRM v4.1 - Adaptive Universal Architecture)
     Unified Predictive Machine Learning Architecture for Native Classification & Regression.
     """
 
@@ -230,9 +230,19 @@ class TopologicalManifoldResonantMachine:
         spread[spread <= 1e-6] = 1.0
         self.feature_stds_ = spread
 
-        # Compute Discreteness Index
+        # Compute Discreteness Index & Auto-Calibrate Geometry
         uniques_per_feat = np.array([len(np.unique(X_arr[~np.isnan(X_arr[:, j]), j])) for j in range(self.n_features_)])
         self.discreteness_index_ = np.clip(1.0 - (uniques_per_feat / max(1, len(X_arr))), 0.1, 0.9)
+        mean_uniques = np.mean(uniques_per_feat)
+        is_discrete = (mean_uniques <= 5) or (np.mean(uniques_per_feat / max(1, len(X_arr))) < 0.05)
+
+        # Dynamic Octaves: Low-dimensional or discrete data avoids high-frequency boundary micro-ripples
+        if self.harmonic_octaves == 3 and (is_discrete or self.n_features_ < 25):
+            self.harmonic_octaves = 2
+
+        # Dynamic Subspaces: Ensure optimal feature density per manifold
+        if self.n_subspaces == 6 and self.n_features_ < 20:
+            self.n_subspaces = max(2, self.n_features_ // 4)
 
         # High-Dimensional Shield (Johnson-Lindenstrauss Projection for D > max_latent_dim)
         if self.n_features_ > self.max_latent_dim:
@@ -301,6 +311,9 @@ class TopologicalManifoldResonantMachine:
         self.classes_ = unique_y
         self.n_classes_ = len(unique_y)
         self.class_priors_ = np.array([np.mean(y_arr == c) for c in self.classes_])
+        # Auto-calibrate focal gamma for class imbalance
+        imb_ratio = np.max(self.class_priors_) / max(1e-4, np.min(self.class_priors_))
+        eff_gamma = self.focal_gamma if self.focal_gamma > 0 else (0.5 if imb_ratio > 1.4 else 0.0)
 
         # Fisher Discriminant Feature Relevance in Latent Space
         feature_weights = np.ones(self.effective_dim_)
@@ -331,7 +344,7 @@ class TopologicalManifoldResonantMachine:
             X_c = X_norm[idx_c]
             n_c = len(X_c)
 
-            self.class_weights_[c] = float((n_total / (max(1, n_c) * self.n_classes_)) ** self.focal_gamma)
+            self.class_weights_[c] = float((n_total / (max(1, n_c) * self.n_classes_)) ** eff_gamma)
             k_clusters = min(self._auto_k_resonators(n_c), max(1, n_c // 2))
 
             # K-means++ initialization
@@ -353,7 +366,12 @@ class TopologicalManifoldResonantMachine:
                 center_k = np.mean(cluster_pts, axis=0)
                 diff = (cluster_pts - center_k) * np.sqrt(self.feature_weights_)
                 cov_k = (diff.T @ diff) / max(1, len(cluster_pts) - 1)
-                cov_reg = cov_k + np.eye(self.effective_dim_) * (self.reg * self.global_bandwidth_)
+
+                # Ledoit-Wolf Analytical Shrinkage (Prevents metric distance explosion on small clusters)
+                trace_k = np.trace(cov_k) / max(1, self.effective_dim_)
+                alpha_shrink = np.clip(1.0 / np.sqrt(max(2, len(cluster_pts))), 0.10, 0.40)
+                cov_shrunk = (1.0 - alpha_shrink) * cov_k + alpha_shrink * (trace_k + self.reg) * np.eye(self.effective_dim_)
+                cov_reg = cov_shrunk + np.eye(self.effective_dim_) * (self.reg * self.global_bandwidth_)
 
                 try:
                     inv_metric = np.linalg.pinv(cov_reg)
@@ -397,12 +415,13 @@ class TopologicalManifoldResonantMachine:
             # Topological Subspace Wave-Packets
             self.subspaces_ = []
             Phi_subspaces = []
-            sub_dim = max(2, int(np.sqrt(self.effective_dim_) * 1.5))
-            effective_n_subs = min(self.n_subspaces, max(2, n_samples // 45))
+            sub_dim = max(2, min(self.effective_dim_ - 1, int(np.sqrt(self.effective_dim_) * 1.5)))
+            effective_n_subs = min(self.n_subspaces, max(2, n_samples // 30))
             if sub_dim < self.effective_dim_ and effective_n_subs > 1:
                 gamma_sub = 1.0 / (2.0 * (self.global_bandwidth_ ** 2))
+                p_feats = self.feature_weights_ / np.sum(self.feature_weights_)
                 for s in range(effective_n_subs):
-                    feats = rng.choice(self.effective_dim_, size=sub_dim, replace=False)
+                    feats = rng.choice(self.effective_dim_, size=sub_dim, replace=False, p=p_feats)
                     X_sub = (X_norm * np.sqrt(self.feature_weights_))[:, feats]
                     C_sub = (self.all_centroids_ * np.sqrt(self.feature_weights_))[:, feats]
                     D2_sub = cdist(X_sub, C_sub, metric='sqeuclidean')
