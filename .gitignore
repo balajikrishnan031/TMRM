@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Testing & caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Datasets and experiments (PURE ALGORITHM REPO ONLY)
+*.csv
+*.tsv
+*.parquet
+*.h5
+*.hdf5
+*.pkl
+*.joblib
+*.npy
+*.npz
+data/
+datasets/
+models/*.pkl
