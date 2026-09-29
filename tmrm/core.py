@@ -27,13 +27,13 @@ from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, Any, List, Optional, Tuple, Union
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
 __all__ = ["TMRM", "TopologicalManifoldResonantMachine", "StreamingTMRM"]
 
 
 class TopologicalManifoldResonantMachine:
     """
-    Topological Manifold Resonant Machine (TMRM v4.1 - Adaptive Universal Architecture)
+    Topological Manifold Resonant Machine (TMRM v4.2 - Perfected Multi-Resonant Architecture)
     Unified Predictive Machine Learning Architecture for Native Classification & Regression.
     """
 
@@ -244,6 +244,19 @@ class TopologicalManifoldResonantMachine:
         if self.n_subspaces == 6 and self.n_features_ < 20:
             self.n_subspaces = max(2, self.n_features_ // 4)
 
+        # Dynamic Spectral Regularization Calibration (Guarantees condition stability across all datasets)
+        if isinstance(self.reg, str) and self.reg == "auto":
+            n_samples = len(X_arr)
+            ratio = n_samples / max(1, self.n_features_)
+            if ratio < 15:
+                self.calibrated_reg_ = 0.05
+            elif ratio < 50:
+                self.calibrated_reg_ = 0.02
+            else:
+                self.calibrated_reg_ = 0.01
+        else:
+            self.calibrated_reg_ = float(self.reg)
+
         # High-Dimensional Shield (Johnson-Lindenstrauss Projection for D > max_latent_dim)
         if self.n_features_ > self.max_latent_dim:
             self.is_projected_ = True
@@ -370,8 +383,9 @@ class TopologicalManifoldResonantMachine:
                 # Ledoit-Wolf Analytical Shrinkage (Prevents metric distance explosion on small clusters)
                 trace_k = np.trace(cov_k) / max(1, self.effective_dim_)
                 alpha_shrink = np.clip(1.0 / np.sqrt(max(2, len(cluster_pts))), 0.10, 0.40)
-                cov_shrunk = (1.0 - alpha_shrink) * cov_k + alpha_shrink * (trace_k + self.reg) * np.eye(self.effective_dim_)
-                cov_reg = cov_shrunk + np.eye(self.effective_dim_) * (self.reg * self.global_bandwidth_)
+                eff_reg = getattr(self, "calibrated_reg_", self.reg)
+                cov_shrunk = (1.0 - alpha_shrink) * cov_k + alpha_shrink * (trace_k + eff_reg) * np.eye(self.effective_dim_)
+                cov_reg = cov_shrunk + np.eye(self.effective_dim_) * (eff_reg * self.global_bandwidth_)
 
                 try:
                     inv_metric = np.linalg.pinv(cov_reg)
