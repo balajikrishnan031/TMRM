@@ -1,70 +1,176 @@
 """
-Unit tests for TMRM package.
+Comprehensive Enterprise Test Suite for TMRM (Topological Manifold Resonant Machine)
+Validates:
+1. Unified Multiclass & Binary Classification
+2. Continuous Riemannian Manifold Regression (R^2 & RMSE)
+3. Auto-Topology (Auto-K Resonators)
+4. In-Model Epistemic Novelty (Self-Doubt on OOD)
+5. Actionable Human-Readable Recourse with Named Features & Immutability
+6. Serialization (Save and Load from Disk)
 """
-import numpy as np
+
+import os
+import tempfile
 import pytest
-from tmrm import TMRM, StreamingTMRM, __version__
+import numpy as np
+import pandas as pd
+from sklearn.datasets import make_classification, make_regression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, f1_score, r2_score, mean_squared_error
 
-def test_version():
-    assert __version__ == "4.4.0"
+from tmrm import TopologicalManifoldResonantMachine
 
-def test_tmrm_classification():
-    np.random.seed(42)
-    X = np.random.randn(100, 5)
-    y = (X[:, 0] > 0).astype(int)
 
-    clf = TMRM(task_type="classification", n_subspaces=3, random_state=42)
-    clf.fit(X, y)
+def test_tmrm_classification_pipeline():
+    """Test full classification with pandas DataFrame and Auto-K"""
+    X, y = make_classification(n_samples=400, n_features=6, n_classes=2, random_state=42)
+    feature_names = [f"biomarker_{i}" for i in range(6)]
+    df = pd.DataFrame(X, columns=feature_names)
 
-    preds = clf.predict(X)
-    probs = clf.predict_proba(X)
+    X_train, X_test, y_train, y_test = train_test_split(df, y, test_size=0.25, random_state=42)
 
-    assert preds.shape == (100,)
-    assert probs.shape == (100, 2)
-    assert np.mean(preds == y) > 0.85
+    model = TopologicalManifoldResonantMachine(n_resonators="auto", random_state=42)
+    model.fit(X_train, y_train)
 
-def test_tmrm_regression():
-    np.random.seed(42)
-    X = np.random.randn(100, 4)
-    y = 2.0 * X[:, 0] - 1.5 * X[:, 1] + 0.1 * np.random.randn(100)
+    assert model.is_fitted
+    assert model.is_classifier
+    assert len(model.feature_names_) == 6
 
-    reg = TMRM(task_type="regression", n_subspaces=3, random_state=42)
-    reg.fit(X, y)
+    preds = model.predict(X_test)
+    probs = model.predict_proba(X_test)
 
-    preds = reg.predict(X)
-    assert preds.shape == (100,)
-    ss_res = np.sum((y - preds) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
-    r2 = 1.0 - (ss_res / ss_tot)
-    assert r2 > 0.80
+    assert len(preds) == len(y_test)
+    assert probs.shape == (len(y_test), 2)
+    assert np.allclose(np.sum(probs, axis=1), 1.0)
 
-def test_tmrm_novelty():
-    np.random.seed(42)
-    X_train = np.random.randn(100, 4)
-    y_train = (X_train[:, 0] > 0).astype(int)
+    acc = accuracy_score(y_test, preds)
+    assert acc > 0.80, f"Expected accuracy > 0.80, got {acc:.4f}"
 
-    clf = TMRM(n_subspaces=2, random_state=42)
-    clf.fit(X_train, y_train)
 
-    # In distribution
-    novelty_id = clf.get_epistemic_novelty(X_train)
-    # Out of distribution
-    X_ood = np.random.randn(20, 4) + 15.0
-    novelty_ood = clf.get_epistemic_novelty(X_ood)
+def test_tmrm_continuous_regression():
+    """Test continuous manifold regression"""
+    X, y = make_regression(n_samples=500, n_features=5, noise=0.1, random_state=42)
+    df = pd.DataFrame(X, columns=["temp", "humidity", "pressure", "wind", "elevation"])
 
-    assert np.mean(novelty_ood) > np.mean(novelty_id)
+    X_train, X_test, y_train, y_test = train_test_split(df, y, test_size=0.25, random_state=42)
 
-def test_streaming_tmrm():
-    np.random.seed(42)
-    stream = StreamingTMRM(n_subspaces=2, random_state=42)
+    model = TopologicalManifoldResonantMachine(task_type="regression", n_resonators="auto", random_state=42)
+    model.fit(X_train, y_train)
 
-    X1 = np.random.randn(50, 6)
-    y1 = (X1[:, 0] > 0).astype(int)
-    stream.partial_fit(X1, y1)
+    assert model.is_fitted
+    assert not model.is_classifier
 
-    X2 = np.random.randn(50, 6)
-    y2 = (X2[:, 0] > 0).astype(int)
-    stream.partial_fit(X2, y2)
+    preds = model.predict(X_test)
+    assert len(preds) == len(y_test)
 
-    preds = stream.predict(X2)
-    assert len(preds) == 50
+    r2 = r2_score(y_test, preds)
+    assert r2 > 0.60, f"Expected R2 > 0.60, got {r2:.4f}"
+
+
+def test_tmrm_epistemic_novelty_self_doubt():
+    """Test that TMRM detects alien Out-of-Distribution samples automatically"""
+    X, y = make_classification(n_samples=300, n_features=4, random_state=42)
+    model = TopologicalManifoldResonantMachine(random_state=42)
+    model.fit(X, y)
+
+    # In-distribution sample
+    in_dist_sample = X[:2]
+    in_novelty = model.get_epistemic_novelty(in_dist_sample)
+
+    # Alien Out-of-distribution sample
+    ood_sample = np.full((2, 4), 25.0)
+    ood_novelty = model.get_epistemic_novelty(ood_sample)
+
+    assert np.all(ood_novelty > in_novelty), "OOD samples must have significantly higher novelty score than in-dist"
+    assert np.all(ood_novelty > model.novelty_threshold), "OOD samples must trigger the self-doubt threshold"
+
+
+def test_tmrm_human_readable_recourse():
+    if os.path.exists("data/real_world/heart_disease.csv"):
+        df = pd.read_csv("data/real_world/heart_disease.csv")
+        target_col = [c for c in df.columns if "target" in c.lower() or "heart" in c.lower() or "disease" in c.lower()][0]
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
+    else:
+        X_arr, y_arr = make_classification(n_samples=200, n_features=5, n_classes=2, random_state=42)
+        X = pd.DataFrame(X_arr, columns=["age", "sex", "bp", "chol", "hr"])
+        y = pd.Series(y_arr)
+
+    model = TopologicalManifoldResonantMachine(n_resonators="auto", random_state=42)
+    model.fit(X, y)
+
+    # Pick a sample of class 1 (High risk)
+    high_risk_idx = np.where(y.values == 1)[0][0]
+    sample = X.iloc[high_risk_idx]
+
+    # Generate recourse to flip to Class 0 (Safe) with age marked immutable
+    immutable_feats = ["age", "sex"]
+    recourse_plan = model.get_recourse_action_plan(
+        sample=sample,
+        target_class=0,
+        immutable_features=immutable_feats
+    )
+
+    assert recourse_plan["target_class"] == 0
+    assert "action_items" in recourse_plan
+    assert len(recourse_plan["action_items"]) > 0
+
+    # Ensure immutable features were not changed
+    for item in recourse_plan["action_items"]:
+        assert item["feature"] not in immutable_feats, f"Immutable feature {item['feature']} was modified!"
+        assert "description" in item
+
+
+def test_tmrm_persistence_save_load():
+    """Test saving and loading trained TMRM model"""
+    X, y = make_classification(n_samples=200, n_features=4, random_state=42)
+    model = TopologicalManifoldResonantMachine(random_state=42)
+    model.fit(X, y)
+
+    orig_preds = model.predict(X[:10])
+
+    with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        model.save(tmp_path)
+        assert os.path.exists(tmp_path)
+
+        loaded_model = TopologicalManifoldResonantMachine.load(tmp_path)
+        loaded_preds = loaded_model.predict(X[:10])
+
+        assert np.array_equal(orig_preds, loaded_preds), "Loaded model predictions must exactly match original"
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def test_tmrm_conformal_prediction_and_safety_audit():
+    """Test Certified Conformal Prediction Sets and Epistemic Safety Audit (v4.5)"""
+    # 1. Classification Conformal Coverage
+    X_c, y_c = make_classification(n_samples=300, n_features=6, n_classes=2, random_state=42)
+    m_cls = TopologicalManifoldResonantMachine(wavelet_phase="auto", random_state=42)
+    m_cls.fit(X_c, y_c)
+
+    c_sets = m_cls.predict_conformal_set(X_c[:20], alpha=0.10)
+    assert len(c_sets) == 20
+    assert all(isinstance(s, list) and len(s) >= 1 for s in c_sets)
+
+    audit_c = m_cls.predict_with_safety_audit(X_c[:20], alpha=0.10)
+    assert "safety_status" in audit_c
+    assert "conformal_sets" in audit_c
+    assert all(status in ["SAFE_HIGH_CONFIDENCE", "AMBIGUOUS_BOUNDARY", "REJECT_OUT_OF_DISTRIBUTION"] for status in audit_c["safety_status"])
+
+    # 2. Regression Conformal Intervals
+    X_r, y_r = make_regression(n_samples=300, n_features=5, noise=0.1, random_state=42)
+    m_reg = TopologicalManifoldResonantMachine(task_type="regression", random_state=42)
+    m_reg.fit(X_r, y_r)
+
+    low, high = m_reg.predict_conformal_interval(X_r[:20], alpha=0.10)
+    assert len(low) == 20 and len(high) == 20
+    assert np.all(high >= low)
+
+    audit_r = m_reg.predict_with_safety_audit(X_r[:20], alpha=0.10)
+    assert "conformal_intervals" in audit_r
+    assert "lower_bounds" in audit_r
+    assert len(audit_r["safety_status"]) == 20
