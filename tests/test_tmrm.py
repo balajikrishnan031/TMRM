@@ -6,7 +6,7 @@ import pytest
 from tmrm import TMRM, StreamingTMRM, __version__
 
 def test_version():
-    assert __version__ == "4.2.0"
+    assert __version__ == "4.4.0"
 
 def test_tmrm_classification():
     np.random.seed(42)

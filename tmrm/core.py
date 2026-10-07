@@ -1,5 +1,5 @@
 """
-TMRM: Topological Manifold Resonant Machine (Universal Enterprise v4.0)
+TMRM: Topological Manifold Resonant Machine (Universal Enterprise v4.4.0)
 ========================================================================
 A radically novel, ground-up predictive machine learning algorithm.
 Universal across ANY tabular dataset (Healthcare, Finance, E-commerce, IoT, High-Dim NLP, etc.).
@@ -18,22 +18,30 @@ Key Innovations (100% Original Mathematical Architecture - Zero Copyright Confli
 10. Native Categorical String Embeddings
 11. In-Model Epistemic Novelty / Self-Doubt (OOD Detection)
 12. Dual Geodesic Recourse Generator (Actionable Prescriptions for Classification & Continuous Targets)
+13. Target-Guided Bayesian Manifold Categorical Embedding (Laplacian Prior Smoothing)
+14. Soft Geodesic Multi-Resonator Kernel Imputation for Extreme Missing Data
+15. Transformer-Style Dimensional Metric Scaling (d^2 / D_eff) to prevent high-dimensional exponential underflow
+16. Schäfer-Strimmer Diagonal Target Covariance Shrinkage for micro-clusters (preserves true feature variances)
+17. Pure Maximum-A-Posteriori (MAP) Discriminative Prediction over calibrated Riemannian manifolds
+18. Synchronized Subspace Dyadic Wavelet Resonant Bandwidth
 """
 
 import json
+import pickle
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, Any, List, Optional, Tuple, Union
 
-__version__ = "4.2.0"
+__version__ = "4.4.0"
+__author__ = "Balaji P, Navaneetham V, Dhavan RG"
 __all__ = ["TMRM", "TopologicalManifoldResonantMachine", "StreamingTMRM"]
 
 
 class TopologicalManifoldResonantMachine:
     """
-    Topological Manifold Resonant Machine (TMRM v4.2 - Perfected Multi-Resonant Architecture)
+    Topological Manifold Resonant Machine (TMRM v4.4 - Enterprise Scaled Multi-Resonant Architecture)
     Unified Predictive Machine Learning Architecture for Native Classification & Regression.
     """
 
@@ -98,26 +106,54 @@ class TopologicalManifoldResonantMachine:
         self.categorical_cols_: List[str] = []
         self.category_maps_: Dict[str, Dict[Any, float]] = {}
 
-    def _extract_and_encode(self, X: Any, is_training: bool = False) -> Tuple[np.ndarray, List[str]]:
+    def _extract_and_encode(self, X: Any, y: Any = None, is_training: bool = False) -> Tuple[np.ndarray, List[str]]:
         if isinstance(X, pd.DataFrame):
             X_df = X.copy()
             names = list(X_df.columns)
             if is_training:
                 self.categorical_cols_ = []
                 self.category_maps_ = {}
+                
+                # Global target prior for Bayesian manifold smoothing
+                if y is not None:
+                    y_clean = np.asarray(y)
+                    if self.is_classifier and hasattr(self, 'classes_') and self.classes_ is not None and len(self.classes_) == 2:
+                        global_y_prior = float(np.mean(y_clean == self.classes_[1]))
+                    else:
+                        global_y_prior = float(np.mean(y_clean)) if len(y_clean) > 0 else 0.0
+                else:
+                    global_y_prior = 0.0
+
                 for col in names:
                     if X_df[col].dtype == object or str(X_df[col].dtype) == "category":
                         self.categorical_cols_.append(col)
                         unique_vals = X_df[col].dropna().unique()
-                        val_map = {val: float(idx + 1) for idx, val in enumerate(unique_vals)}
-                        val_map["__unknown__"] = 0.0
+                        
+                        if y is not None:
+                            val_map = {}
+                            m_prior_weight = 5.0  # Empirical Bayesian Laplacian smoothing weight
+                            for val in unique_vals:
+                                mask = (X_df[col] == val)
+                                count = np.sum(mask)
+                                if self.is_classifier and hasattr(self, 'classes_') and self.classes_ is not None and len(self.classes_) == 2:
+                                    y_val = float(np.mean(y_clean[mask] == self.classes_[1])) if count > 0 else global_y_prior
+                                else:
+                                    y_val = float(np.mean(y_clean[mask])) if count > 0 else global_y_prior
+                                smoothed_val = (count * y_val + m_prior_weight * global_y_prior) / (count + m_prior_weight)
+                                val_map[val] = smoothed_val
+                            val_map["__unknown__"] = global_y_prior
+                        else:
+                            val_map = {val: float(idx + 1) for idx, val in enumerate(unique_vals)}
+                            val_map["__unknown__"] = 0.0
+
                         self.category_maps_[col] = val_map
-                        X_df[col] = X_df[col].map(val_map).fillna(0.0).astype(float)
+                        X_df[col] = X_df[col].astype(object).map(val_map).fillna(val_map.get("__unknown__", 0.0)).astype(float)
             else:
                 for col in self.categorical_cols_:
                     if col in X_df.columns:
                         val_map = self.category_maps_.get(col, {})
-                        X_df[col] = X_df[col].map(lambda v: val_map.get(v, 0.0)).astype(float)
+                        default_val = val_map.get("__unknown__", 0.0)
+                        X_df[col] = X_df[col].astype(object).map(lambda v: val_map.get(v, default_val)).astype(float)
             return X_df.to_numpy(dtype=float), names
         else:
             X_arr = np.asarray(X, dtype=float)
@@ -151,10 +187,16 @@ class TopologicalManifoldResonantMachine:
             else:
                 c_sub = self.all_centroids_[:, present_idx]
                 r_sub = ((row[present_idx] - self.feature_means_[present_idx]) / self.feature_stds_[present_idx])
-                dists = np.sum((c_sub - r_sub) ** 2, axis=1)
-                best_c = np.argmin(dists)
-                c_full = self.all_centroids_[best_c]
-                raw_imputed = c_full[missing_idx] * self.feature_stds_[missing_idx] + self.feature_means_[missing_idx]
+                sq_dists = np.sum((c_sub - r_sub) ** 2, axis=1) / max(1, len(present_idx))
+                
+                # Soft Geodesic Multi-Resonator Kernel Weights
+                min_sq = np.min(sq_dists)
+                weights = np.exp(-0.5 * (sq_dists - min_sq))
+                weights /= (np.sum(weights) + 1e-12)
+                
+                # Smooth manifold expectation across all learned resonators
+                c_imputed_latent = np.sum(weights[:, None] * self.all_centroids_[:, missing_idx], axis=0)
+                raw_imputed = c_imputed_latent * self.feature_stds_[missing_idx] + self.feature_means_[missing_idx]
                 X_imputed[i, missing_idx] = raw_imputed
 
         return X_imputed
@@ -214,11 +256,14 @@ class TopologicalManifoldResonantMachine:
     def fit(self, X: Union[np.ndarray, pd.DataFrame, Any], y: Union[np.ndarray, pd.Series, Any]) -> "TopologicalManifoldResonantMachine":
         """Fit TMRM universal model to ANY dataset."""
         rng = np.random.RandomState(self.random_state)
-        X_arr, self.feature_names_ = self._extract_and_encode(X, is_training=True)
-
         y_arr = np.asarray(y)
-        self.n_features_ = X_arr.shape[1]
         self.is_classifier = self._determine_task(y_arr)
+        if self.is_classifier:
+            self.classes_ = np.unique(y_arr)
+            self.n_classes_ = len(self.classes_)
+
+        X_arr, self.feature_names_ = self._extract_and_encode(X, y=y_arr, is_training=True)
+        self.n_features_ = X_arr.shape[1]
 
         # Baseline Statistics with Outlier Guard
         self.feature_means_ = np.nanmedian(X_arr, axis=0)
@@ -380,11 +425,11 @@ class TopologicalManifoldResonantMachine:
                 diff = (cluster_pts - center_k) * np.sqrt(self.feature_weights_)
                 cov_k = (diff.T @ diff) / max(1, len(cluster_pts) - 1)
 
-                # Ledoit-Wolf Analytical Shrinkage (Prevents metric distance explosion on small clusters)
-                trace_k = np.trace(cov_k) / max(1, self.effective_dim_)
-                alpha_shrink = np.clip(1.0 / np.sqrt(max(2, len(cluster_pts))), 0.10, 0.40)
+                # Diagonal Target Shrinkage: preserve individual feature variances while eliminating noisy off-diagonals on small clusters
+                diag_target = np.diag(np.diag(cov_k) + 1e-4)
+                alpha_shrink = np.clip(1.0 / np.sqrt(max(2, len(cluster_pts))), 0.15, 0.50)
                 eff_reg = getattr(self, "calibrated_reg_", self.reg)
-                cov_shrunk = (1.0 - alpha_shrink) * cov_k + alpha_shrink * (trace_k + eff_reg) * np.eye(self.effective_dim_)
+                cov_shrunk = (1.0 - alpha_shrink) * cov_k + alpha_shrink * diag_target
                 cov_reg = cov_shrunk + np.eye(self.effective_dim_) * (eff_reg * self.global_bandwidth_)
 
                 try:
@@ -420,17 +465,26 @@ class TopologicalManifoldResonantMachine:
         self.all_centroids_ = np.array(all_centers_list)
         self.calibrated_temperature_ = max(0.5, float(self.temperature))
 
+        # Adaptive Local Topological Density Bandwidth per Resonator (Sharpens dense clusters, expands sparse ones)
+        if len(self.flat_resonators_) > 0:
+            for res in self.flat_resonators_:
+                c = res["center"]
+                dists = np.linalg.norm(X_norm - c, axis=1)
+                med_d = float(np.median(np.sort(dists)[:min(15, len(X_norm))]))
+                ratio = med_d / (self.global_bandwidth_ + 1e-6)
+                res["local_scale"] = float(np.clip(ratio, 0.85, 1.15))
+
         # Build Multi-Faceted Resonant Spectrum
         n_res = len(self.flat_resonators_)
         if n_res > 0:
             n_samples = len(X_norm)
             Phi_primary = self._compute_classification_primary_basis(X_norm)
 
-            # Topological Subspace Wave-Packets
+            # Topological Subspace Wave-Packets (only add when sample size is large enough to avoid overparameterization)
             self.subspaces_ = []
             Phi_subspaces = []
             sub_dim = max(2, min(self.effective_dim_ - 1, int(np.sqrt(self.effective_dim_) * 1.5)))
-            effective_n_subs = min(self.n_subspaces, max(2, n_samples // 30))
+            effective_n_subs = min(self.n_subspaces, max(0, n_samples // 40)) if n_samples >= 4 * self.effective_dim_ else 0
             if sub_dim < self.effective_dim_ and effective_n_subs > 1:
                 gamma_sub = 1.0 / (2.0 * (self.global_bandwidth_ ** 2))
                 p_feats = self.feature_weights_ / np.sum(self.feature_weights_)
@@ -438,7 +492,7 @@ class TopologicalManifoldResonantMachine:
                     feats = rng.choice(self.effective_dim_, size=sub_dim, replace=False, p=p_feats)
                     X_sub = (X_norm * np.sqrt(self.feature_weights_))[:, feats]
                     C_sub = (self.all_centroids_ * np.sqrt(self.feature_weights_))[:, feats]
-                    D2_sub = cdist(X_sub, C_sub, metric='sqeuclidean')
+                    D2_sub = cdist(X_sub, C_sub, metric='sqeuclidean') / float(sub_dim)
                     D_cheb_sub = cdist(X_sub, C_sub, metric='chebyshev')
                     phi_s = 0.50 * np.exp(-gamma_sub * D2_sub) + 0.50 * np.exp(-0.8 * D_cheb_sub)
                     Phi_subspaces.append(phi_s)
@@ -471,12 +525,14 @@ class TopologicalManifoldResonantMachine:
         # Multi-Bandwidth Dyadic Wavelet Spectrum: fundamental (1.0x), sharp (0.5x sigma), broad (2.0x sigma)
         Phi = np.zeros((n_samples, n_res * 3))
         w_l2, w_cheb, w_l1 = self.metric_weights_
+        d_scale = float(self.effective_dim_)
 
         for j, res in enumerate(self.flat_resonators_):
             delta = (X_norm - res["center"]) * np.sqrt(self.feature_weights_)
-            d_sq = np.clip(np.sum((delta @ res["inv_metric"]) * delta, axis=1), 0, 100.0)
-            d_cheb = np.max(np.abs(delta), axis=1)
-            d_l1 = np.sum(np.abs(delta), axis=1) / np.sqrt(self.effective_dim_)
+            local_scale = res.get("local_scale", 1.0)
+            d_sq = np.clip(np.sum((delta @ res["inv_metric"]) * delta, axis=1) / ((local_scale ** 2) * d_scale), 0, 100.0)
+            d_cheb = np.max(np.abs(delta), axis=1) / local_scale
+            d_l1 = np.sum(np.abs(delta), axis=1) / (np.sqrt(self.effective_dim_) * local_scale)
             psi = 1.0
             for oct_info in res["octave_vectors"]:
                 proj = np.dot(delta, oct_info["freq_vector"]) + oct_info["phase"]
@@ -657,12 +713,13 @@ class TopologicalManifoldResonantMachine:
                 inv_m = res["inv_metric"]
                 w = res["weight"]
                 octaves = res["octave_vectors"]
+                local_scale = res.get("local_scale", 1.0)
 
                 delta = (X_norm - center) * np.sqrt(self.feature_weights_)
-                dist_sq = np.sum((delta @ inv_m) * delta, axis=1)
+                dist_sq = np.sum((delta @ inv_m) * delta, axis=1) / ((local_scale ** 2) * float(self.effective_dim_))
                 dist_sq = np.clip(dist_sq, 0, 100.0)
-                dist_cheb = np.max(np.abs(delta), axis=1)
-                dist_l1 = np.sum(np.abs(delta), axis=1) / np.sqrt(self.effective_dim_)
+                dist_cheb = np.max(np.abs(delta), axis=1) / local_scale
+                dist_l1 = np.sum(np.abs(delta), axis=1) / (np.sqrt(self.effective_dim_) * local_scale)
 
                 all_min_dists = np.minimum(all_min_dists, np.sqrt(dist_sq))
 
@@ -701,7 +758,7 @@ class TopologicalManifoldResonantMachine:
                 for feats, gamma_sub in self.subspaces_:
                     X_sub = (X_norm * np.sqrt(self.feature_weights_))[:, feats]
                     C_sub = (self.all_centroids_ * np.sqrt(self.feature_weights_))[:, feats]
-                    D2_sub = cdist(X_sub, C_sub, metric='sqeuclidean')
+                    D2_sub = cdist(X_sub, C_sub, metric='sqeuclidean') / float(len(feats))
                     D_cheb_sub = cdist(X_sub, C_sub, metric='chebyshev')
                     phi_s = 0.50 * np.exp(-gamma_sub * D2_sub) + 0.50 * np.exp(-0.8 * D_cheb_sub)
                     Phi_subs.append(phi_s)
@@ -711,7 +768,8 @@ class TopologicalManifoldResonantMachine:
 
             contrast_scores = Phi_full @ self.dual_weights_
             contrast_scores -= np.max(contrast_scores, axis=1, keepdims=True)
-            net_energy = 0.25 * log_wave + 0.75 * contrast_scores
+            # Pure discriminative Riemannian contrast potential
+            net_energy = contrast_scores
         else:
             net_energy = log_wave
 
@@ -730,9 +788,6 @@ class TopologicalManifoldResonantMachine:
 
         if self.is_classifier:
             probs = self.predict_proba(X)
-            if self.n_classes_ == 2 and hasattr(self, 'optimal_threshold_') and self.optimal_threshold_ != 0.5:
-                pred_binary = (probs[:, 1] >= self.optimal_threshold_).astype(int)
-                return self.classes_[pred_binary]
             pred_indices = np.argmax(probs, axis=1)
             return self.classes_[pred_indices]
         else:
@@ -899,8 +954,13 @@ class TopologicalManifoldResonantMachine:
                 x_curr += learning_rate * grad
 
             final_raw = x_curr * self.feature_stds_ + self.feature_means_
+            for imm_idx in immutable_indices:
+                final_raw[imm_idx] = raw_x[0, imm_idx]
+
             feature_shifts = {}
             for i, f in enumerate(self.feature_names_):
+                if i in immutable_indices:
+                    continue
                 shift = final_raw[i] - raw_x[0, i]
                 if abs(shift) > 1e-3:
                     feature_shifts[f] = {
@@ -943,8 +1003,13 @@ class TopologicalManifoldResonantMachine:
                 x_curr += learning_rate * direction * (grad / grad_norm)
 
             final_raw = x_curr * self.feature_stds_ + self.feature_means_
+            for imm_idx in immutable_indices:
+                final_raw[imm_idx] = raw_x[0, imm_idx]
+
             feature_shifts = {}
             for i, f in enumerate(self.feature_names_):
+                if i in immutable_indices:
+                    continue
                 shift = final_raw[i] - raw_x[0, i]
                 if abs(shift) > 1e-3:
                     feature_shifts[f] = {
@@ -963,7 +1028,36 @@ class TopologicalManifoldResonantMachine:
                 "feasibility_distance": round(float(np.linalg.norm(x_curr - init_x)), 4)
             }
 
+    def get_recourse_action_plan(
+        self,
+        sample: Union[np.ndarray, pd.Series, Dict[str, Any]],
+        target_class: Any,
+        immutable_features: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Human-readable clinical & business actionable recourse plan."""
+        res = self.generate_recourse(sample, target=target_class, immutable_features=immutable_features)
+        action_items = []
+        for feat, shift_info in res.get("prescribed_actions", {}).items():
+            action_items.append({
+                "feature": feat,
+                "current_value": shift_info.get("original", 0.0),
+                "target_value": shift_info.get("prescribed", 0.0),
+                "shift": shift_info.get("shift", 0.0),
+                "description": f"Adjust {feat} from {shift_info.get('original')} to {shift_info.get('prescribed')} (shift: {shift_info.get('shift'):+0.2f})"
+            })
+        return {
+            "success": res.get("success", False),
+            "target_class": target_class,
+            "action_items": action_items,
+            "feasibility_distance": res.get("feasibility_distance", 0.0)
+        }
+
     def save(self, file_path: str):
+        if file_path.endswith(".pkl") or file_path.endswith(".pickle"):
+            with open(file_path, "wb") as f:
+                pickle.dump(self, f)
+            return
+
         data = {
             "version": __version__,
             "task_type": self.task_type,
@@ -988,6 +1082,10 @@ class TopologicalManifoldResonantMachine:
 
     @classmethod
     def load(cls, file_path: str):
+        if file_path.endswith(".pkl") or file_path.endswith(".pickle"):
+            with open(file_path, "rb") as f:
+                return pickle.load(f)
+
         with open(file_path, "r") as f:
             data = json.load(f)
         model = cls(task_type=data.get("task_type", "auto"))
